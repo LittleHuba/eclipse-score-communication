@@ -1,0 +1,65 @@
+# *******************************************************************************
+# Copyright (c) 2024 Contributors to the Eclipse Foundation
+#
+# See the NOTICE file(s) distributed with this work for additional
+# information regarding copyright ownership.
+#
+# This program and the accompanying materials are made available under the
+# terms of the Apache License Version 2.0 which is available at
+# https://www.apache.org/licenses/LICENSE-2.0
+#
+# SPDX-License-Identifier: Apache-2.0
+# *******************************************************************************
+
+# Workflow configuration for S-CORE CI - Bazel Build & Test communication module
+# This workflow runs static analysis when triggered by specific pull request events.
+
+name: Static Analysis
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+  merge_group:
+    types: [checks_requested]
+env:
+  ACTIONS_STEP_DEBUG: true
+jobs:
+  codeql:
+    name: CodeQL Analysis
+    runs-on: ubuntu-22.04
+    permissions:
+      security-events: write
+      packages: read
+      actions: read
+      contents: read
+    steps:
+      - name: Install non-hermetic dependencies # Fixes https://github.com/bazel-contrib/toolchains_llvm/issues/403
+        run: |
+          sudo apt-get install -y libtinfo5
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: c-cpp
+          build-mode: manual
+          packs: codeql/misra-cpp-coding-standards@2.52.0
+      - uses: bazel-contrib/setup-bazel@0.15.0
+        with:
+          bazelisk-cache: true
+          # https://docs.github.com/en/enterprise-cloud@latest/code-security/codeql-cli/getting-started-with-the-codeql-cli/preparing-your-code-for-codeql-analysis#specifying-build-commands
+          disk-cache: false
+          repository-cache: true
+      - name: Build code
+        shell: bash
+        run: |
+          bazel build --action_env=LD_PRELOAD --extra_toolchains=@llvm_toolchain//:cc-toolchain-x86_64-linux --spawn_strategy=local --nouse_action_cache --noremote_accept_cached --noremote_upload_local_results --disk_cache= -- //score/mw/com
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:c-cpp"
+          output: sarif-results.sarif
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sarif-results.sarif
+          path: sarif-results.sarif
